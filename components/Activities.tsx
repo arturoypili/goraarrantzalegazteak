@@ -28,16 +28,16 @@ const Activities: React.FC<Props> = ({ isAdmin }) => {
     setLoading(false);
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const r = new FileReader();
-      r.onload = async () => {
-        // Reducimos a 400px para que no llene la memoria nunca
-        const optimized = await optimizeImage(r.result as string, 400, 400, 0.5);
+      setError(null);
+      try {
+        const optimized = await optimizeImage(file, 300, 300, 0.4);
         setFormState(prev => ({ ...prev, image: optimized }));
-      };
-      r.readAsDataURL(file);
+      } catch (err) {
+        setError("La foto es demasiado pesada o no se puede procesar.");
+      }
     }
   };
 
@@ -71,11 +71,7 @@ const Activities: React.FC<Props> = ({ isAdmin }) => {
       setIsEditing(null); 
       setFormState({});
     } catch (e: any) { 
-      if (e.message === "QUOTA_EXCEEDED") {
-        setError("La memoria está llena. Borra noticias o fotos antiguas para poder guardar cambios.");
-      } else {
-        setError("Error inesperado al guardar la noticia.");
-      }
+      setError("No se pudo guardar la noticia. Prueba con una foto diferente.");
     } finally {
       setSaving(false);
     }

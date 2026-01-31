@@ -29,28 +29,26 @@ const History: React.FC<Props> = ({ isAdmin }) => {
     finally { setLoading(false); }
   };
 
-  // NUEVO: Procesamiento de archivos uno por uno para evitar bloqueos
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
+    setError(null);
     setProcessingImages(true);
     const newImages: string[] = [...(formState.images || [])];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
-        const base64 = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.readAsDataURL(file);
-        });
-        
-        // Optimizamos a 350px para Historias para maximizar capacidad
-        const optimized = await optimizeImage(base64, 350, 350, 0.4);
+        // Reducimos a 300px con calidad baja (0.4) para asegurar que quepan muchas fotos
+        const optimized = await optimizeImage(file, 300, 300, 0.4);
         newImages.push(optimized);
-      } catch (err) {
-        console.error("Error procesando imagen:", err);
+      } catch (err: any) {
+        if (err.message === "IMAGE_TOO_LARGE") {
+          setError("Una de las fotos es demasiado grande para procesarla.");
+        } else {
+          setError("Error al procesar una de las imágenes.");
+        }
       }
     }
 
@@ -71,7 +69,6 @@ const History: React.FC<Props> = ({ isAdmin }) => {
 
     try {
       const currentImages = formState.images || [];
-      // Subir a la nube si está configurado, o mantener base64
       const uploadedImages = await Promise.all(
         currentImages.map(async (img) => {
           if (img.startsWith('data:image')) return await uploadToCloudinary(img);
@@ -98,9 +95,9 @@ const History: React.FC<Props> = ({ isAdmin }) => {
       setFormState({ images: [] });
     } catch (err: any) {
       if (err.message === "QUOTA_EXCEEDED") {
-        setError("La memoria está llena. Debes borrar algún relato antiguo para añadir fotos nuevas.");
+        setError("La memoria del navegador está saturada por las fotos. Intenta borrar alguna noticia o historia antigua.");
       } else {
-        setError("Error al guardar los cambios.");
+        setError("Error al guardar. Intenta subir menos fotos a la vez.");
       }
     } finally { 
       setSaving(false); 
@@ -149,18 +146,18 @@ const History: React.FC<Props> = ({ isAdmin }) => {
                         onClick={() => { setIsEditing(item); setFormState({...item, images: item.images || []}); setError(null); }} 
                         className="flex items-center gap-2 px-8 py-4 bg-blue-600 text-white rounded-2xl font-black uppercase text-sm hover:bg-blue-700 shadow-xl transition-all active:scale-95"
                       >
-                        <Edit size={20} /> Editar Contenido
+                        <Edit size={20} /> Editar
                       </button>
                       
                       {deletingId === item.id ? (
-                        <div className="flex items-center bg-red-50 p-2 rounded-2xl border-2 border-red-200 animate-in zoom-in-95">
-                          <button onClick={() => handleDelete(item.id)} className="bg-red-600 text-white px-6 py-2 rounded-xl text-xs font-black uppercase">Confirmar Borrado</button>
-                          <button onClick={() => setDeletingId(null)} className="px-6 py-2 text-slate-500 text-xs font-black uppercase">Cancelar</button>
+                        <div className="flex items-center bg-red-50 p-2 rounded-2xl border-2 border-red-200">
+                          <button onClick={() => handleDelete(item.id)} className="bg-red-600 text-white px-6 py-2 rounded-xl text-xs font-black uppercase">SÍ, BORRAR</button>
+                          <button onClick={() => setDeletingId(null)} className="px-6 py-2 text-slate-500 text-xs font-black uppercase">NO</button>
                         </div>
                       ) : (
                         <button 
                           onClick={() => setDeletingId(item.id)} 
-                          className="flex items-center gap-2 px-8 py-4 bg-red-600 text-white rounded-2xl font-black uppercase text-sm hover:bg-red-700 shadow-xl transition-all active:scale-95"
+                          className="flex items-center gap-2 px-8 py-4 bg-red-600 text-white rounded-2xl font-black uppercase text-sm hover:bg-red-700 shadow-xl transition-all"
                         >
                           <Trash2 size={20} /> Eliminar
                         </button>
@@ -197,7 +194,6 @@ const History: React.FC<Props> = ({ isAdmin }) => {
             <div className="bg-[#001f3f] p-8 text-white flex justify-between items-center">
               <div>
                 <h3 className="text-xl font-black uppercase italic leading-none">{isAdding ? 'Añadir Relato' : 'Editar Relato'}</h3>
-                <p className="text-[10px] text-blue-300 font-bold uppercase mt-2 tracking-widest">Gestión de Historia</p>
               </div>
               <button onClick={() => { setIsAdding(false); setIsEditing(null); setFormState({ images: [] }); setError(null); }} className="p-2 hover:bg-white/10 rounded-full transition-colors"><X size={28} /></button>
             </div>
@@ -211,27 +207,27 @@ const History: React.FC<Props> = ({ isAdmin }) => {
 
               <div className="grid md:grid-cols-2 gap-6">
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Título / Izenburua</label>
-                  <input required placeholder="Escribe el título..." value={formState.title || ''} onChange={e => setFormState({...formState, title: e.target.value})} className="w-full px-5 py-4 bg-slate-50 border-2 border-transparent focus:border-blue-500 rounded-2xl font-bold outline-none transition-all" />
+                  <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Título</label>
+                  <input required value={formState.title || ''} onChange={e => setFormState({...formState, title: e.target.value})} className="w-full px-5 py-4 bg-slate-50 border-2 border-transparent focus:border-blue-500 rounded-2xl font-bold outline-none transition-all" />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Año / Urtea</label>
+                  <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Año</label>
                   <input placeholder="Ej: 2024" value={formState.year || ''} onChange={e => setFormState({...formState, year: e.target.value})} className="w-full px-5 py-4 bg-slate-50 border-2 border-transparent focus:border-blue-500 rounded-2xl font-bold outline-none transition-all" />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Relato / Pasartea</label>
-                <textarea required placeholder="Escribe aquí la historia..." value={formState.content || ''} onChange={e => setFormState({...formState, content: e.target.value})} className="w-full px-5 py-4 bg-slate-50 border-2 border-transparent focus:border-blue-500 rounded-2xl min-h-[180px] leading-relaxed outline-none transition-all" />
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Relato</label>
+                <textarea required value={formState.content || ''} onChange={e => setFormState({...formState, content: e.target.value})} className="w-full px-5 py-4 bg-slate-50 border-2 border-transparent focus:border-blue-500 rounded-2xl min-h-[180px] leading-relaxed outline-none transition-all" />
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Fotos del Relato (puedes subir varias)</label>
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Fotos del Relato</label>
                 <div className="grid grid-cols-4 sm:grid-cols-5 gap-3">
                   {(formState.images || []).map((img, idx) => (
-                    <div key={idx} className="relative aspect-square rounded-xl overflow-hidden border-2 border-slate-100 shadow-sm group">
+                    <div key={idx} className="relative aspect-square rounded-xl overflow-hidden border-2 border-slate-100 group">
                       <img src={img} className="w-full h-full object-cover" />
-                      <button type="button" onClick={() => removeImage(idx)} className="absolute inset-0 bg-red-600/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white"><X size={20} /></button>
+                      <button type="button" onClick={() => removeImage(idx)} className="absolute inset-0 bg-red-600/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white font-black">X</button>
                     </div>
                   ))}
                   
@@ -249,8 +245,8 @@ const History: React.FC<Props> = ({ isAdmin }) => {
                 </div>
               </div>
 
-              <button type="submit" disabled={saving || processingImages} className="w-full py-5 bg-red-600 text-white font-black uppercase rounded-[1.5rem] shadow-xl flex items-center justify-center gap-3 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                {saving ? <Loader2 className="animate-spin" /> : <Save />} {saving ? 'GUARDANDO CAMBIOS...' : 'GUARDAR RELATO'}
+              <button type="submit" disabled={saving || processingImages} className="w-full py-5 bg-red-600 text-white font-black uppercase rounded-[1.5rem] shadow-xl flex items-center justify-center gap-3 active:scale-95 transition-all">
+                {saving ? <Loader2 className="animate-spin" /> : <Save />} {saving ? 'GUARDANDO...' : 'GUARDAR RELATO'}
               </button>
             </form>
           </div>

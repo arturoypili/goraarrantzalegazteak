@@ -42,21 +42,30 @@ const isCloudinaryConfigured =
   CLOUDINARY_CLOUD_NAME !== "TU_CLOUD_NAME";
 
 /**
- * Optimiza imagen a tamaño reducido para máxima capacidad local invisible.
+ * Optimiza imagen de forma eficiente. 
+ * Usa maxWidth=300 para Historias/Noticias para asegurar que entren cientos de fotos.
  */
-export const optimizeImage = (base64Str: string, maxWidth = 350, maxHeight = 350, quality = 0.4): Promise<string> => {
-  return new Promise((resolve) => {
+export const optimizeImage = (file: File | string, maxWidth = 300, maxHeight = 300, quality = 0.4): Promise<string> => {
+  return new Promise((resolve, reject) => {
     const img = new Image();
-    img.src = base64Str;
+    
+    // Si es un archivo File, creamos una URL temporal para no saturar la RAM
+    const url = typeof file === 'string' ? file : URL.createObjectURL(file);
+    
+    img.src = url;
     img.onload = () => {
+      if (typeof file !== 'string') URL.revokeObjectURL(url); // Limpiamos memoria
+
       const canvas = document.createElement('canvas');
       let width = img.width;
       let height = img.height;
+
       if (width > height) {
         if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; }
       } else {
         if (height > maxHeight) { width *= maxHeight / height; height = maxHeight; }
       }
+
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext('2d');
@@ -65,9 +74,20 @@ export const optimizeImage = (base64Str: string, maxWidth = 350, maxHeight = 350
         ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
       }
-      resolve(canvas.toDataURL('image/jpeg', quality));
+      
+      const result = canvas.toDataURL('image/jpeg', quality);
+      
+      // Seguridad: Si el resultado sigue siendo mayor a 1MB (muy raro), rechazamos
+      if (result.length > 1024 * 1024) {
+        reject(new Error("IMAGE_TOO_LARGE"));
+      } else {
+        resolve(result);
+      }
     };
-    img.onerror = () => resolve(base64Str);
+    img.onerror = () => {
+      if (typeof file !== 'string') URL.revokeObjectURL(url);
+      reject(new Error("LOAD_ERROR"));
+    };
   });
 };
 
@@ -98,7 +118,6 @@ const localDB = {
       localStorage.setItem(`gora_${collectionName}`, JSON.stringify(items));
       return true;
     } catch (e) {
-      // Error de cuota excedida
       return false;
     }
   },
@@ -125,7 +144,6 @@ export const dbService = {
         items = localDB.get(collectionName);
       }
     }
-    // Ordenar por año si existe
     return items.sort((a, b) => {
       const yearA = Number(a.year || a.año) || 0;
       const yearB = Number(b.year || b.año) || 0;

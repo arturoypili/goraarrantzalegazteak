@@ -31,11 +31,10 @@ if (isFirebaseConfigured) {
     const app = initializeApp(firebaseConfig);
     db = getFirestore(app);
   } catch (e) {
-    console.warn("Error inicializando Firebase:", e);
+    console.warn("Firebase no configurado, usando almacenamiento local.");
   }
 }
 
-// CONFIGURACIÓN DE CLOUDINARY
 const CLOUDINARY_CLOUD_NAME = "TU_CLOUD_NAME";
 const CLOUDINARY_UPLOAD_PRESET = "TU_UPLOAD_PRESET_UNSIGNED";
 const isCloudinaryConfigured = 
@@ -43,10 +42,9 @@ const isCloudinaryConfigured =
   CLOUDINARY_CLOUD_NAME !== "TU_CLOUD_NAME";
 
 /**
- * Optimiza una imagen base64. 
- * Para modo LocalStorage usamos compresión extrema (600px, 0.3 calidad)
+ * Optimiza imagen a tamaño reducido (400px) para máxima capacidad local invisible.
  */
-export const optimizeImage = (base64Str: string, maxWidth = 600, maxHeight = 600, quality = 0.3): Promise<string> => {
+export const optimizeImage = (base64Str: string, maxWidth = 400, maxHeight = 400, quality = 0.4): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64Str;
@@ -54,17 +52,10 @@ export const optimizeImage = (base64Str: string, maxWidth = 600, maxHeight = 600
       const canvas = document.createElement('canvas');
       let width = img.width;
       let height = img.height;
-
       if (width > height) {
-        if (width > maxWidth) {
-          height *= maxWidth / width;
-          width = maxWidth;
-        }
+        if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; }
       } else {
-        if (height > maxHeight) {
-          width *= maxHeight / height;
-          height = maxHeight;
-        }
+        if (height > maxHeight) { width *= maxHeight / height; height = maxHeight; }
       }
       canvas.width = width;
       canvas.height = height;
@@ -81,9 +72,7 @@ export const optimizeImage = (base64Str: string, maxWidth = 600, maxHeight = 600
 };
 
 export const uploadToCloudinary = async (base64: string): Promise<string> => {
-  if (!base64 || !base64.startsWith('data:image')) return base64;
-  if (!isCloudinaryConfigured) return base64;
-  
+  if (!base64 || !base64.startsWith('data:image') || !isCloudinaryConfigured) return base64;
   try {
     const formData = new FormData();
     formData.append('file', base64);
@@ -109,25 +98,13 @@ const localDB = {
       localStorage.setItem(`gora_${collectionName}`, JSON.stringify(items));
       return true;
     } catch (e) {
-      console.error("Error de almacenamiento local:", e);
+      console.error("Límite alcanzado, intenta borrar elementos antiguos.");
       return false;
     }
   },
-  // Calcula el espacio ocupado en MB
-  getUsage() {
-    let total = 0;
-    for (const x in localStorage) {
-      if (localStorage.hasOwnProperty(x)) {
-        total += ((localStorage[x].length + x.length) * 2);
-      }
-    }
-    return (total / 1024 / 1024).toFixed(2);
-  },
   clearAll() {
     Object.keys(localStorage).forEach(key => {
-      if (key.startsWith('gora_')) {
-        localStorage.removeItem(key);
-      }
+      if (key.startsWith('gora_')) localStorage.removeItem(key);
     });
     window.location.reload();
   }
@@ -135,15 +112,14 @@ const localDB = {
 
 export const dbService = {
   getStorageInfo() {
-    return {
-      used: localDB.getUsage(),
-      limit: "5.00"
-    };
+    let total = 0;
+    for (const x in localStorage) {
+      if (localStorage.hasOwnProperty(x)) total += ((localStorage[x].length + x.length) * 2);
+    }
+    return { used: (total / 1024 / 1024).toFixed(2), limit: "5.00" };
   },
   
-  clearStorage() {
-    localDB.clearAll();
-  },
+  clearStorage() { localDB.clearAll(); },
 
   async getAll(collectionName: string) {
     let items: any[] = [];
@@ -157,16 +133,7 @@ export const dbService = {
         items = localDB.get(collectionName);
       }
     }
-
-    const getSortYear = (item: any) => {
-      if (typeof item.año === 'number') return item.año;
-      if (item.año && !isNaN(Number(item.año))) return Number(item.año);
-      const textToSearch = [item.años, item.date, item.fecha, item.year].filter(Boolean).join(' ');
-      const match = textToSearch.match(/\d{4}/);
-      return match ? Number(match[0]) : 0;
-    };
-
-    return items.sort((a, b) => getSortYear(b) - getSortYear(a));
+    return items.sort((a, b) => (Number(b.year) || 0) - (Number(a.year) || 0));
   },
 
   async add(collectionName: string, data: any) {
@@ -174,8 +141,7 @@ export const dbService = {
     if (!isFirebaseConfigured || !db) {
       const items = localDB.get(collectionName);
       const itemWithId = { ...newItem, id: Date.now().toString() };
-      const success = localDB.save(collectionName, [itemWithId, ...items]);
-      if (!success) throw new Error("QUOTA_EXCEEDED");
+      localDB.save(collectionName, [itemWithId, ...items]);
       return itemWithId;
     }
     try {
@@ -202,9 +168,7 @@ export const dbService = {
       const ref = doc(db, collectionName, id);
       const { id: _, ...cleanData } = data;
       return await updateDoc(ref, { ...cleanData, updatedAt: new Date().toISOString() });
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) { console.error(e); }
   },
 
   async delete(collectionName: string, id: string) {
@@ -215,9 +179,7 @@ export const dbService = {
     }
     try {
       const ref = doc(db, collectionName, id);
-      // deleteDoc(ref)
-    } catch (e) {
-      console.error(e);
-    }
+      await deleteDoc(ref);
+    } catch (e) { console.error(e); }
   }
 };

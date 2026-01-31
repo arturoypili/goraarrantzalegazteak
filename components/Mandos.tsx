@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Mando } from '../types';
-import { dbService, uploadToCloudinary } from '../lib/storage';
+import { dbService, uploadToCloudinary, optimizeImage } from '../lib/storage';
 import { Plus, Edit, Trash2, X, Save, Upload, Loader2, UserCircle } from 'lucide-react';
 
 interface Props {
@@ -37,8 +37,9 @@ const Mandos: React.FC<Props> = ({ isAdmin }) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormState(prev => ({ ...prev, foto: reader.result as string }));
+      reader.onloadend = async () => {
+        const optimized = await optimizeImage(reader.result as string, 800, 1000);
+        setFormState(prev => ({ ...prev, foto: optimized }));
       };
       reader.readAsDataURL(file);
     }

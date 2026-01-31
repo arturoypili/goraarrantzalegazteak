@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { dbService, uploadToCloudinary } from '../lib/storage';
+import { dbService, uploadToCloudinary, optimizeImage } from '../lib/storage';
 import { Plus, Trash2, Loader2, Upload, Image as ImageIcon } from 'lucide-react';
 
 interface Props {
@@ -35,20 +35,22 @@ const Photos: React.FC<Props> = ({ isAdmin }) => {
     
     setUploading(true);
     try {
-      // Explicitly casting the array to File[] to avoid 'unknown' type errors in strict TS environments
-      for (const file of Array.from(files) as File[]) {
+      const filesArray = Array.from(files) as File[];
+      
+      for (const file of filesArray) {
         const reader = new FileReader();
         const base64 = await new Promise<string>((resolve) => {
           reader.onload = () => resolve(reader.result as string);
           reader.readAsDataURL(file);
         });
 
-        const url = await uploadToCloudinary(base64);
+        const optimized = await optimizeImage(base64);
+        const url = await uploadToCloudinary(optimized);
         await dbService.add('photos', { url });
       }
       await loadPhotos();
     } catch (error) {
-      alert("Error al subir fotos");
+      alert("Error al subir fotos. Es posible que el almacenamiento esté lleno.");
     } finally {
       setUploading(false);
     }

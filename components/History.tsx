@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { HistoryItem } from '../types';
 import { BookOpen, Plus, Edit, Trash2, X, Save, Upload, Image as ImageIcon, Loader2 } from 'lucide-react';
-import { dbService, uploadToCloudinary } from '../lib/storage';
+import { dbService, uploadToCloudinary, optimizeImage } from '../lib/storage';
 
 interface Props {
   isAdmin?: boolean;
@@ -32,16 +32,16 @@ const History: React.FC<Props> = ({ isAdmin }) => {
     }
   };
 
-  // Explicitly typing 'file' as File to resolve the 'unknown' type error in some TS environments
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files) {
       Array.from(files).forEach((file: File) => {
         const reader = new FileReader();
-        reader.onloadend = () => {
+        reader.onloadend = async () => {
+          const optimized = await optimizeImage(reader.result as string);
           setFormState(prev => ({
             ...prev,
-            images: [...(prev.images || []), reader.result as string]
+            images: [...(prev.images || []), optimized]
           }));
         };
         reader.readAsDataURL(file);
@@ -62,7 +62,6 @@ const History: React.FC<Props> = ({ isAdmin }) => {
     setSaving(true);
 
     try {
-      // Subir todas las imágenes nuevas a Cloudinary
       const currentImages = formState.images || [];
       const uploadedImages = await Promise.all(
         currentImages.map(async (img) => {
@@ -91,7 +90,7 @@ const History: React.FC<Props> = ({ isAdmin }) => {
       setIsEditing(null);
       setFormState({ images: [] });
     } catch (error) {
-      alert("Error al guardar");
+      alert("Error al guardar el relato");
     } finally {
       setSaving(false);
     }
@@ -198,7 +197,7 @@ const History: React.FC<Props> = ({ isAdmin }) => {
               <textarea required placeholder="Relato..." value={formState.content || ''} onChange={e => setFormState({...formState, content: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border rounded-xl min-h-[150px]" />
               
               <div className="space-y-4">
-                <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Imágenes (Varias fotos permitidas)</label>
+                <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Imágenes (Se comprimirán automáticamente)</label>
                 <div className="grid grid-cols-4 gap-2">
                   {(formState.images || []).map((img, idx) => (
                     <div key={idx} className="relative aspect-square rounded-lg overflow-hidden border">

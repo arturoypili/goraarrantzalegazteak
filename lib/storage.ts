@@ -22,7 +22,6 @@ const firebaseConfig = {
   appId: "TU_APP_ID"
 };
 
-// Verificación estricta para evitar que el SDK de Firebase intente conectar con datos de ejemplo
 const isFirebaseConfigured = 
   firebaseConfig.apiKey && 
   firebaseConfig.apiKey !== "TU_API_KEY" && 
@@ -47,8 +46,38 @@ const isCloudinaryConfigured =
   CLOUDINARY_CLOUD_NAME !== "TU_CLOUD_NAME";
 
 /**
- * Sube una imagen a Cloudinary o devuelve el base64 si no hay configuración real
+ * Optimiza una imagen base64 antes de subirla o guardarla
  */
+export const optimizeImage = (base64Str: string, maxWidth = 1200, maxHeight = 1200, quality = 0.7): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = base64Str;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+        if (width > maxWidth) {
+          height *= maxWidth / width;
+          width = maxWidth;
+        }
+      } else {
+        if (height > maxHeight) {
+          width *= maxHeight / height;
+          height = maxHeight;
+        }
+      }
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => resolve(base64Str);
+  });
+};
+
 export const uploadToCloudinary = async (base64: string): Promise<string> => {
   if (!base64 || !base64.startsWith('data:image')) return base64;
   
@@ -75,26 +104,24 @@ export const uploadToCloudinary = async (base64: string): Promise<string> => {
   }
 };
 
-/**
- * Almacenamiento Local (LocalStorage)
- */
 const localDB = {
   get(collectionName: string) {
     const data = localStorage.getItem(`gora_${collectionName}`);
     return data ? JSON.parse(data) : [];
   },
   save(collectionName: string, items: any[]) {
-    localStorage.setItem(`gora_${collectionName}`, JSON.stringify(items));
+    try {
+      localStorage.setItem(`gora_${collectionName}`, JSON.stringify(items));
+    } catch (e) {
+      console.error("Error de almacenamiento local (QuotaExceeded):", e);
+      alert("Error: El almacenamiento está lleno. Por favor, sube imágenes más pequeñas o configura una base de datos real.");
+    }
   }
 };
 
-/**
- * Servicio de Base de Datos Unificado
- */
 export const dbService = {
   async getAll(collectionName: string) {
     let items: any[] = [];
-
     if (!isFirebaseConfigured || !db) {
       items = localDB.get(collectionName);
     } else {
@@ -102,37 +129,23 @@ export const dbService = {
         const snapshot = await getDocs(collection(db, collectionName));
         items = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
       } catch (e) {
-        console.error(`Error en Firestore ${collectionName}:`, e);
         items = localDB.get(collectionName);
       }
     }
 
-    /**
-     * EXTRACTOR DE AÑO INTELIGENTE
-     * Intenta obtener un año numérico de cualquier campo posible
-     */
     const getSortYear = (item: any) => {
-      // 1. Prioridad: campo 'año' numérico (Cantineras)
       if (typeof item.año === 'number') return item.año;
       if (item.año && !isNaN(Number(item.año))) return Number(item.año);
-      
-      // 2. Buscar año en campos de texto (Mandos 'años', Noticias 'date', Inscripciones 'fecha')
       const textToSearch = [item.años, item.date, item.fecha].filter(Boolean).join(' ');
-      const match = textToSearch.match(/\d{4}/); // Busca los primeros 4 dígitos consecutivos
+      const match = textToSearch.match(/\d{4}/);
       if (match) return Number(match[0]);
-      
       return 0;
     };
 
-    // LÓGICA DE ORDENACIÓN: Más reciente primero (Descendente)
     return items.sort((a, b) => {
       const yearA = getSortYear(a);
       const yearB = getSortYear(b);
-
-      // Si los años son distintos, ordenamos por año
       if (yearA !== yearB) return yearB - yearA;
-
-      // Si el año es igual (o no hay año), ordenamos por fecha de creación técnica
       const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return timeB - timeA;
@@ -144,14 +157,12 @@ export const dbService = {
       ...data,
       createdAt: new Date().toISOString()
     };
-
     if (!isFirebaseConfigured || !db) {
       const items = localDB.get(collectionName);
       const itemWithId = { ...newItem, id: Date.now().toString() };
       localDB.save(collectionName, [itemWithId, ...items]);
       return itemWithId;
     }
-
     try {
       return await addDoc(collection(db, collectionName), newItem);
     } catch (e) {
@@ -172,7 +183,6 @@ export const dbService = {
       }
       return;
     }
-
     try {
       const ref = doc(db, collectionName, id);
       const { id: _, ...cleanData } = data;
@@ -188,7 +198,6 @@ export const dbService = {
       localDB.save(collectionName, items.filter((item: any) => item.id !== id));
       return;
     }
-
     try {
       const ref = doc(db, collectionName, id);
       return await deleteDoc(ref);

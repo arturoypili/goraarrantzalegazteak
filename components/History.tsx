@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { HistoryItem } from '../types';
-import { BookOpen, Plus, Edit, Trash2, X, Save, Upload, Loader2 } from 'lucide-react';
+import { BookOpen, Plus, Edit, Trash2, X, Save, Upload, Loader2, AlertCircle } from 'lucide-react';
 import { dbService, uploadToCloudinary, optimizeImage } from '../lib/storage';
 
 interface Props {
@@ -12,10 +12,12 @@ const History: React.FC<Props> = ({ isAdmin }) => {
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [processingImages, setProcessingImages] = useState(false);
   const [isEditing, setIsEditing] = useState<HistoryItem | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [formState, setFormState] = useState<Partial<HistoryItem>>({ images: [] });
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => { loadData(); }, []);
 
@@ -27,18 +29,33 @@ const History: React.FC<Props> = ({ isAdmin }) => {
     finally { setLoading(false); }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // NUEVO: Procesamiento de archivos uno por uno para evitar bloqueos
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (files) {
-      Array.from(files).forEach((file: File) => {
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-          const optimized = await optimizeImage(reader.result as string);
-          setFormState(prev => ({ ...prev, images: [...(prev.images || []), optimized] }));
-        };
-        reader.readAsDataURL(file);
-      });
+    if (!files || files.length === 0) return;
+
+    setProcessingImages(true);
+    const newImages: string[] = [...(formState.images || [])];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      try {
+        const base64 = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+        
+        // Optimizamos a 350px para Historias para maximizar capacidad
+        const optimized = await optimizeImage(base64, 350, 350, 0.4);
+        newImages.push(optimized);
+      } catch (err) {
+        console.error("Error procesando imagen:", err);
+      }
     }
+
+    setFormState(prev => ({ ...prev, images: newImages }));
+    setProcessingImages(false);
   };
 
   const removeImage = (idx: number) => {
@@ -48,9 +65,13 @@ const History: React.FC<Props> = ({ isAdmin }) => {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formState.title || !formState.content) return;
+    
     setSaving(true);
+    setError(null);
+
     try {
       const currentImages = formState.images || [];
+      // Subir a la nube si está configurado, o mantener base64
       const uploadedImages = await Promise.all(
         currentImages.map(async (img) => {
           if (img.startsWith('data:image')) return await uploadToCloudinary(img);
@@ -65,14 +86,25 @@ const History: React.FC<Props> = ({ isAdmin }) => {
         year: formState.year || ''
       };
 
-      if (isAdding) await dbService.add('history', data);
-      else if (isEditing) await dbService.update('history', isEditing.id, data);
+      if (isAdding) {
+        await dbService.add('history', data);
+      } else if (isEditing) {
+        await dbService.update('history', isEditing.id, data);
+      }
       
       await loadData();
-      setIsAdding(false); setIsEditing(null); setFormState({ images: [] });
-    } catch (error) {
-      alert("Error al guardar. Intenta borrar elementos antiguos si el problema persiste.");
-    } finally { setSaving(false); }
+      setIsAdding(false); 
+      setIsEditing(null); 
+      setFormState({ images: [] });
+    } catch (err: any) {
+      if (err.message === "QUOTA_EXCEEDED") {
+        setError("La memoria está llena. Debes borrar algún relato antiguo para añadir fotos nuevas.");
+      } else {
+        setError("Error al guardar los cambios.");
+      }
+    } finally { 
+      setSaving(false); 
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -92,7 +124,7 @@ const History: React.FC<Props> = ({ isAdmin }) => {
             <div className="w-24 h-1.5 bg-red-600 mt-4 mx-auto md:mx-0"></div>
           </div>
           {isAdmin && (
-            <button onClick={() => { setIsAdding(true); setFormState({ images: [] }); }} className="flex items-center space-x-2 bg-[#001f3f] text-white px-8 py-3 rounded-xl font-bold hover:bg-red-600 transition-all shadow-xl">
+            <button onClick={() => { setIsAdding(true); setFormState({ images: [] }); setError(null); }} className="flex items-center space-x-2 bg-[#001f3f] text-white px-8 py-3 rounded-xl font-bold hover:bg-red-600 transition-all shadow-xl">
               <Plus size={20} /> <span>Añadir Relato</span>
             </button>
           )}
@@ -112,25 +144,25 @@ const History: React.FC<Props> = ({ isAdmin }) => {
                   </div>
 
                   {isAdmin && (
-                    <div className="flex items-center gap-3 pt-6 border-t border-slate-100">
+                    <div className="flex items-center gap-4 pt-8 border-t border-slate-200">
                       <button 
-                        onClick={() => { setIsEditing(item); setFormState(item); }} 
-                        className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl font-black uppercase text-xs hover:bg-blue-700 shadow-md transition-all"
+                        onClick={() => { setIsEditing(item); setFormState({...item, images: item.images || []}); setError(null); }} 
+                        className="flex items-center gap-2 px-8 py-4 bg-blue-600 text-white rounded-2xl font-black uppercase text-sm hover:bg-blue-700 shadow-xl transition-all active:scale-95"
                       >
-                        <Edit size={16} /> Editar Relato
+                        <Edit size={20} /> Editar Contenido
                       </button>
                       
                       {deletingId === item.id ? (
-                        <div className="flex bg-red-50 p-1 rounded-xl border border-red-200 animate-in zoom-in-95">
-                          <button onClick={() => handleDelete(item.id)} className="bg-red-600 text-white px-4 py-2 rounded-lg text-[10px] font-black uppercase">CONFIRMAR BORRAR</button>
-                          <button onClick={() => setDeletingId(null)} className="px-4 py-2 text-slate-400 text-[10px] font-black uppercase">CANCELAR</button>
+                        <div className="flex items-center bg-red-50 p-2 rounded-2xl border-2 border-red-200 animate-in zoom-in-95">
+                          <button onClick={() => handleDelete(item.id)} className="bg-red-600 text-white px-6 py-2 rounded-xl text-xs font-black uppercase">Confirmar Borrado</button>
+                          <button onClick={() => setDeletingId(null)} className="px-6 py-2 text-slate-500 text-xs font-black uppercase">Cancelar</button>
                         </div>
                       ) : (
                         <button 
                           onClick={() => setDeletingId(item.id)} 
-                          className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-xl font-black uppercase text-xs hover:bg-red-700 shadow-md transition-all"
+                          className="flex items-center gap-2 px-8 py-4 bg-red-600 text-white rounded-2xl font-black uppercase text-sm hover:bg-red-700 shadow-xl transition-all active:scale-95"
                         >
-                          <Trash2 size={16} /> Eliminar
+                          <Trash2 size={20} /> Eliminar
                         </button>
                       )}
                     </div>
@@ -146,9 +178,9 @@ const History: React.FC<Props> = ({ isAdmin }) => {
                     )}
                   </div>
                   {item.images && item.images.length > 1 && (
-                    <div className="grid grid-cols-4 gap-2 mt-4">
+                    <div className="grid grid-cols-4 gap-3 mt-4">
                       {item.images.slice(1).map((img, i) => (
-                        <img key={i} src={img} className="w-full aspect-square object-cover rounded-xl border-2 border-white shadow-sm" />
+                        <img key={i} src={img} className="w-full aspect-square object-cover rounded-2xl border-2 border-white shadow-md" />
                       ))}
                     </div>
                   )}
@@ -161,31 +193,64 @@ const History: React.FC<Props> = ({ isAdmin }) => {
 
       {(isAdding || isEditing) && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden my-8 animate-in zoom-in-95">
-            <div className="bg-[#001f3f] p-6 text-white flex justify-between items-center">
-              <h3 className="text-xl font-black uppercase italic">{isAdding ? 'Añadir Relato' : 'Editar Relato'}</h3>
-              <button onClick={() => { setIsAdding(false); setIsEditing(null); setFormState({ images: [] }); }}><X size={24} /></button>
+          <div className="bg-white w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden my-8 animate-in zoom-in-95">
+            <div className="bg-[#001f3f] p-8 text-white flex justify-between items-center">
+              <div>
+                <h3 className="text-xl font-black uppercase italic leading-none">{isAdding ? 'Añadir Relato' : 'Editar Relato'}</h3>
+                <p className="text-[10px] text-blue-300 font-bold uppercase mt-2 tracking-widest">Gestión de Historia</p>
+              </div>
+              <button onClick={() => { setIsAdding(false); setIsEditing(null); setFormState({ images: [] }); setError(null); }} className="p-2 hover:bg-white/10 rounded-full transition-colors"><X size={28} /></button>
             </div>
+            
             <form onSubmit={handleSave} className="p-8 space-y-6">
+              {error && (
+                <div className="bg-red-50 border-2 border-red-100 p-4 rounded-2xl flex items-center gap-3 text-red-600 text-xs font-black uppercase">
+                  <AlertCircle size={20} /> {error}
+                </div>
+              )}
+
               <div className="grid md:grid-cols-2 gap-6">
-                <input required placeholder="Título..." value={formState.title || ''} onChange={e => setFormState({...formState, title: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border rounded-xl font-bold" />
-                <input placeholder="Año" value={formState.year || ''} onChange={e => setFormState({...formState, year: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border rounded-xl font-bold" />
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Título / Izenburua</label>
+                  <input required placeholder="Escribe el título..." value={formState.title || ''} onChange={e => setFormState({...formState, title: e.target.value})} className="w-full px-5 py-4 bg-slate-50 border-2 border-transparent focus:border-blue-500 rounded-2xl font-bold outline-none transition-all" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Año / Urtea</label>
+                  <input placeholder="Ej: 2024" value={formState.year || ''} onChange={e => setFormState({...formState, year: e.target.value})} className="w-full px-5 py-4 bg-slate-50 border-2 border-transparent focus:border-blue-500 rounded-2xl font-bold outline-none transition-all" />
+                </div>
               </div>
-              <textarea required placeholder="Escribe aquí la historia..." value={formState.content || ''} onChange={e => setFormState({...formState, content: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border rounded-xl min-h-[150px] leading-relaxed" />
-              <div className="grid grid-cols-4 gap-2">
-                {(formState.images || []).map((img, idx) => (
-                  <div key={idx} className="relative aspect-square rounded-lg overflow-hidden border">
-                    <img src={img} className="w-full h-full object-cover" />
-                    <button type="button" onClick={() => removeImage(idx)} className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1"><X size={12} /></button>
-                  </div>
-                ))}
-                <label className="aspect-square flex flex-col items-center justify-center border-2 border-dashed rounded-lg cursor-pointer hover:bg-slate-50 transition-colors border-slate-200">
-                  <Upload size={20} className="text-slate-400" />
-                  <input type="file" multiple accept="image/*" onChange={handleFileChange} className="hidden" />
-                </label>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Relato / Pasartea</label>
+                <textarea required placeholder="Escribe aquí la historia..." value={formState.content || ''} onChange={e => setFormState({...formState, content: e.target.value})} className="w-full px-5 py-4 bg-slate-50 border-2 border-transparent focus:border-blue-500 rounded-2xl min-h-[180px] leading-relaxed outline-none transition-all" />
               </div>
-              <button type="submit" disabled={saving} className="w-full py-5 bg-red-600 text-white font-black uppercase rounded-2xl shadow-xl flex items-center justify-center gap-2 active:scale-95 transition-all">
-                {saving ? <Loader2 className="animate-spin" /> : <Save />} {saving ? 'GUARDANDO...' : 'GUARDAR RELATO'}
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Fotos del Relato (puedes subir varias)</label>
+                <div className="grid grid-cols-4 sm:grid-cols-5 gap-3">
+                  {(formState.images || []).map((img, idx) => (
+                    <div key={idx} className="relative aspect-square rounded-xl overflow-hidden border-2 border-slate-100 shadow-sm group">
+                      <img src={img} className="w-full h-full object-cover" />
+                      <button type="button" onClick={() => removeImage(idx)} className="absolute inset-0 bg-red-600/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white"><X size={20} /></button>
+                    </div>
+                  ))}
+                  
+                  <label className={`aspect-square flex flex-col items-center justify-center border-2 border-dashed rounded-xl cursor-pointer transition-all ${processingImages ? 'bg-slate-100 border-slate-300' : 'hover:bg-blue-50 hover:border-blue-400 border-slate-200'}`}>
+                    {processingImages ? (
+                      <Loader2 className="animate-spin text-blue-500" />
+                    ) : (
+                      <>
+                        <Upload size={24} className="text-slate-400 mb-1" />
+                        <span className="text-[8px] font-black uppercase text-slate-500">Subir</span>
+                      </>
+                    )}
+                    <input type="file" multiple accept="image/*" onChange={handleFileChange} disabled={processingImages} className="hidden" />
+                  </label>
+                </div>
+              </div>
+
+              <button type="submit" disabled={saving || processingImages} className="w-full py-5 bg-red-600 text-white font-black uppercase rounded-[1.5rem] shadow-xl flex items-center justify-center gap-3 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                {saving ? <Loader2 className="animate-spin" /> : <Save />} {saving ? 'GUARDANDO CAMBIOS...' : 'GUARDAR RELATO'}
               </button>
             </form>
           </div>

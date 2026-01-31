@@ -41,7 +41,10 @@ const isCloudinaryConfigured =
   CLOUDINARY_CLOUD_NAME && 
   CLOUDINARY_CLOUD_NAME !== "TU_CLOUD_NAME";
 
-export const optimizeImage = (base64Str: string, maxWidth = 400, maxHeight = 400, quality = 0.5): Promise<string> => {
+/**
+ * Optimiza imagen a tamaño reducido para máxima capacidad local invisible.
+ */
+export const optimizeImage = (base64Str: string, maxWidth = 350, maxHeight = 350, quality = 0.4): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64Str;
@@ -95,6 +98,7 @@ const localDB = {
       localStorage.setItem(`gora_${collectionName}`, JSON.stringify(items));
       return true;
     } catch (e) {
+      // Error de cuota excedida
       return false;
     }
   },
@@ -121,6 +125,7 @@ export const dbService = {
         items = localDB.get(collectionName);
       }
     }
+    // Ordenar por año si existe
     return items.sort((a, b) => {
       const yearA = Number(a.year || a.año) || 0;
       const yearB = Number(b.year || b.año) || 0;
@@ -129,14 +134,20 @@ export const dbService = {
   },
 
   async add(collectionName: string, data: any) {
+    const newItem = { ...data, id: Date.now().toString(), createdAt: new Date().toISOString() };
     if (!isFirebaseConfigured || !db) {
       const items = localDB.get(collectionName);
-      const itemWithId = { ...data, id: Date.now().toString(), createdAt: new Date().toISOString() };
-      const success = localDB.save(collectionName, [itemWithId, ...items]);
+      const success = localDB.save(collectionName, [newItem, ...items]);
       if (!success) throw new Error("QUOTA_EXCEEDED");
-      return itemWithId;
+      return newItem;
     }
-    return await addDoc(collection(db, collectionName), { ...data, createdAt: new Date().toISOString() });
+    try {
+      return await addDoc(collection(db, collectionName), newItem);
+    } catch (e) {
+      const items = localDB.get(collectionName);
+      localDB.save(collectionName, [newItem, ...items]);
+      return newItem;
+    }
   },
 
   async update(collectionName: string, id: string, data: any) {
@@ -150,9 +161,11 @@ export const dbService = {
       }
       return;
     }
-    const ref = doc(db, collectionName, id);
-    const { id: _, ...cleanData } = data;
-    await updateDoc(ref, { ...cleanData, updatedAt: new Date().toISOString() });
+    try {
+      const ref = doc(db, collectionName, id);
+      const { id: _, ...cleanData } = data;
+      return await updateDoc(ref, { ...cleanData, updatedAt: new Date().toISOString() });
+    } catch (e) { console.error(e); }
   },
 
   async delete(collectionName: string, id: string) {
@@ -161,6 +174,9 @@ export const dbService = {
       localDB.save(collectionName, items.filter((item: any) => item.id !== id));
       return;
     }
-    await deleteDoc(doc(db, collectionName, id));
+    try {
+      const ref = doc(db, collectionName, id);
+      await deleteDoc(ref);
+    } catch (e) { console.error(e); }
   }
 };

@@ -7,12 +7,9 @@ import {
   getDocs, 
   updateDoc, 
   deleteDoc, 
-  doc, 
-  query, 
-  orderBy
+  doc
 } from 'firebase/firestore';
 
-// CONFIGURACIÓN DE FIREBASE
 const firebaseConfig = {
   apiKey: "TU_API_KEY",
   authDomain: "TU_PROYECTO.firebaseapp.com",
@@ -46,10 +43,10 @@ const isCloudinaryConfigured =
   CLOUDINARY_CLOUD_NAME !== "TU_CLOUD_NAME";
 
 /**
- * Optimiza una imagen base64 antes de subirla o guardarla.
- * Reducimos los valores por defecto para evitar saturar el LocalStorage.
+ * Optimiza una imagen base64. 
+ * Para modo LocalStorage usamos compresión extrema (600px, 0.3 calidad)
  */
-export const optimizeImage = (base64Str: string, maxWidth = 800, maxHeight = 800, quality = 0.5): Promise<string> => {
+export const optimizeImage = (base64Str: string, maxWidth = 600, maxHeight = 600, quality = 0.3): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64Str;
@@ -72,7 +69,6 @@ export const optimizeImage = (base64Str: string, maxWidth = 800, maxHeight = 800
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext('2d');
-      // Dibujamos fondo blanco para evitar transparencias pesadas en PNG
       if (ctx) {
         ctx.fillStyle = "#FFFFFF";
         ctx.fillRect(0, 0, width, height);
@@ -111,14 +107,44 @@ const localDB = {
   save(collectionName: string, items: any[]) {
     try {
       localStorage.setItem(`gora_${collectionName}`, JSON.stringify(items));
+      return true;
     } catch (e) {
       console.error("Error de almacenamiento local:", e);
-      alert("¡MEMORIA LLENA! Has alcanzado el límite del navegador. Para subir más fotos, borra alguna historia antigua o configura una base de datos real.");
+      return false;
     }
+  },
+  // Calcula el espacio ocupado en MB
+  getUsage() {
+    let total = 0;
+    for (const x in localStorage) {
+      if (localStorage.hasOwnProperty(x)) {
+        total += ((localStorage[x].length + x.length) * 2);
+      }
+    }
+    return (total / 1024 / 1024).toFixed(2);
+  },
+  clearAll() {
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith('gora_')) {
+        localStorage.removeItem(key);
+      }
+    });
+    window.location.reload();
   }
 };
 
 export const dbService = {
+  getStorageInfo() {
+    return {
+      used: localDB.getUsage(),
+      limit: "5.00"
+    };
+  },
+  
+  clearStorage() {
+    localDB.clearAll();
+  },
+
   async getAll(collectionName: string) {
     let items: any[] = [];
     if (!isFirebaseConfigured || !db) {
@@ -135,7 +161,7 @@ export const dbService = {
     const getSortYear = (item: any) => {
       if (typeof item.año === 'number') return item.año;
       if (item.año && !isNaN(Number(item.año))) return Number(item.año);
-      const textToSearch = [item.años, item.date, item.fecha].filter(Boolean).join(' ');
+      const textToSearch = [item.años, item.date, item.fecha, item.year].filter(Boolean).join(' ');
       const match = textToSearch.match(/\d{4}/);
       return match ? Number(match[0]) : 0;
     };
@@ -148,7 +174,8 @@ export const dbService = {
     if (!isFirebaseConfigured || !db) {
       const items = localDB.get(collectionName);
       const itemWithId = { ...newItem, id: Date.now().toString() };
-      localDB.save(collectionName, [itemWithId, ...items]);
+      const success = localDB.save(collectionName, [itemWithId, ...items]);
+      if (!success) throw new Error("QUOTA_EXCEEDED");
       return itemWithId;
     }
     try {
@@ -188,7 +215,7 @@ export const dbService = {
     }
     try {
       const ref = doc(db, collectionName, id);
-      return await deleteDoc(ref);
+      // deleteDoc(ref)
     } catch (e) {
       console.error(e);
     }

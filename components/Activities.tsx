@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Activity as ActivityType } from '../types';
-import { Calendar, Plus, Edit, Trash2, X, Save, Upload, Loader2, Image as ImageIcon } from 'lucide-react';
+import { Calendar, Plus, Edit, Trash2, X, Save, Upload, Loader2, Image as ImageIcon, AlertCircle } from 'lucide-react';
 import { dbService, uploadToCloudinary, optimizeImage } from '../lib/storage';
 
 interface Props {
@@ -16,6 +16,7 @@ const Activities: React.FC<Props> = ({ isAdmin }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [formState, setFormState] = useState<Partial<ActivityType>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => { loadData(); }, []);
 
@@ -32,9 +33,9 @@ const Activities: React.FC<Props> = ({ isAdmin }) => {
     if (file) {
       const r = new FileReader();
       r.onload = async () => {
-        // Añadimos optimización aquí (antes no estaba y llenaba la memoria)
-        const optimized = await optimizeImage(r.result as string, 800, 600, 0.6);
-        setFormState({...formState, image: optimized});
+        // Reducimos a 400px para que no llene la memoria nunca
+        const optimized = await optimizeImage(r.result as string, 400, 400, 0.5);
+        setFormState(prev => ({ ...prev, image: optimized }));
       };
       r.readAsDataURL(file);
     }
@@ -44,24 +45,40 @@ const Activities: React.FC<Props> = ({ isAdmin }) => {
     e.preventDefault();
     if (!formState.title || !formState.description) return;
     setSaving(true);
+    setError(null);
+
     try {
       let imageUrl = formState.image || '';
       if (imageUrl.startsWith('data:image')) {
         imageUrl = await uploadToCloudinary(imageUrl);
       }
+
       const data = { 
-        ...formState, 
+        title: formState.title,
+        description: formState.description,
         image: imageUrl, 
         date: formState.date || new Date().toLocaleDateString('es-ES') 
       };
-      if (isAdding) await dbService.add('activities', data);
-      else if (isEditing) await dbService.update('activities', isEditing.id, data);
+
+      if (isAdding) {
+        await dbService.add('activities', data);
+      } else if (isEditing) {
+        await dbService.update('activities', isEditing.id, data);
+      }
+      
       await loadData();
-      setIsAdding(false); setIsEditing(null); setFormState({});
-    } catch (e) { 
-      alert("Error al guardar noticia. El almacenamiento podría estar lleno."); 
+      setIsAdding(false); 
+      setIsEditing(null); 
+      setFormState({});
+    } catch (e: any) { 
+      if (e.message === "QUOTA_EXCEEDED") {
+        setError("La memoria está llena. Borra noticias o fotos antiguas para poder guardar cambios.");
+      } else {
+        setError("Error inesperado al guardar la noticia.");
+      }
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   if (loading) return <div className="py-24 text-center text-slate-400 font-bold uppercase animate-pulse">Cargando Noticias...</div>;
@@ -72,7 +89,7 @@ const Activities: React.FC<Props> = ({ isAdmin }) => {
         <div className="flex flex-col md:flex-row justify-between items-end mb-16 gap-6 border-b pb-8">
           <h2 className="text-4xl md:text-5xl font-black text-[#001f3f] uppercase italic">NOTICIAS / ALBISTEAK</h2>
           {isAdmin && (
-            <button onClick={() => { setIsAdding(true); setFormState({}); }} className="bg-[#001f3f] text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-red-600 transition-colors shadow-lg"><Plus size={18} /> Añadir Noticia</button>
+            <button onClick={() => { setIsAdding(true); setFormState({}); setError(null); }} className="bg-[#001f3f] text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-red-600 transition-colors shadow-lg"><Plus size={18} /> Añadir Noticia</button>
           )}
         </div>
 
@@ -95,7 +112,7 @@ const Activities: React.FC<Props> = ({ isAdmin }) => {
                   <p className="text-slate-600 text-sm line-clamp-4 leading-relaxed">{act.description}</p>
                   {isAdmin && (
                     <div className="mt-6 flex gap-2">
-                      <button onClick={() => { setIsEditing(act); setFormState(act); }} className="p-3 bg-blue-600 text-white rounded-xl shadow-md hover:bg-blue-700 transition-all"><Edit size={16} /></button>
+                      <button onClick={() => { setIsEditing(act); setFormState(act); setError(null); }} className="p-3 bg-blue-600 text-white rounded-xl shadow-md hover:bg-blue-700 transition-all"><Edit size={16} /></button>
                       {deletingId === act.id ? (
                         <button onClick={async () => { await dbService.delete('activities', act.id); loadData(); setDeletingId(null); }} className="bg-red-600 text-white px-4 rounded-xl text-[10px] font-black uppercase shadow-md">CONFIRMAR BORRADO</button>
                       ) : (
@@ -115,9 +132,15 @@ const Activities: React.FC<Props> = ({ isAdmin }) => {
           <div className="bg-white w-full max-w-xl rounded-3xl overflow-hidden shadow-2xl animate-in zoom-in-95">
             <div className="bg-[#001f3f] p-6 text-white flex justify-between items-center">
               <span className="font-black uppercase italic">{isAdding ? 'Nueva Noticia' : 'Editar Noticia'}</span>
-              <button onClick={() => { setIsAdding(false); setIsEditing(null); setFormState({}); }}><X /></button>
+              <button onClick={() => { setIsAdding(false); setIsEditing(null); setFormState({}); setError(null); }}><X /></button>
             </div>
             <form onSubmit={handleSave} className="p-8 space-y-5">
+              {error && (
+                <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex items-center gap-3 text-red-600 text-xs font-bold uppercase animate-pulse">
+                  <AlertCircle size={18} /> {error}
+                </div>
+              )}
+              
               <div className="space-y-1">
                 <label className="text-[10px] font-black uppercase text-slate-500 ml-1">Título</label>
                 <input required placeholder="Escribe el título..." value={formState.title || ''} onChange={e => setFormState({...formState, title: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border rounded-xl font-bold" />

@@ -41,10 +41,7 @@ const isCloudinaryConfigured =
   CLOUDINARY_CLOUD_NAME && 
   CLOUDINARY_CLOUD_NAME !== "TU_CLOUD_NAME";
 
-/**
- * Optimiza imagen a tamaño reducido (400px) para máxima capacidad local invisible.
- */
-export const optimizeImage = (base64Str: string, maxWidth = 400, maxHeight = 400, quality = 0.4): Promise<string> => {
+export const optimizeImage = (base64Str: string, maxWidth = 400, maxHeight = 400, quality = 0.5): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64Str;
@@ -98,7 +95,6 @@ const localDB = {
       localStorage.setItem(`gora_${collectionName}`, JSON.stringify(items));
       return true;
     } catch (e) {
-      console.error("Límite alcanzado, intenta borrar elementos antiguos.");
       return false;
     }
   },
@@ -111,14 +107,6 @@ const localDB = {
 };
 
 export const dbService = {
-  getStorageInfo() {
-    let total = 0;
-    for (const x in localStorage) {
-      if (localStorage.hasOwnProperty(x)) total += ((localStorage[x].length + x.length) * 2);
-    }
-    return { used: (total / 1024 / 1024).toFixed(2), limit: "5.00" };
-  },
-  
   clearStorage() { localDB.clearAll(); },
 
   async getAll(collectionName: string) {
@@ -133,25 +121,22 @@ export const dbService = {
         items = localDB.get(collectionName);
       }
     }
-    return items.sort((a, b) => (Number(b.year) || 0) - (Number(a.year) || 0));
+    return items.sort((a, b) => {
+      const yearA = Number(a.year || a.año) || 0;
+      const yearB = Number(b.year || b.año) || 0;
+      return yearB - yearA;
+    });
   },
 
   async add(collectionName: string, data: any) {
-    const newItem = { ...data, createdAt: new Date().toISOString() };
     if (!isFirebaseConfigured || !db) {
       const items = localDB.get(collectionName);
-      const itemWithId = { ...newItem, id: Date.now().toString() };
-      localDB.save(collectionName, [itemWithId, ...items]);
+      const itemWithId = { ...data, id: Date.now().toString(), createdAt: new Date().toISOString() };
+      const success = localDB.save(collectionName, [itemWithId, ...items]);
+      if (!success) throw new Error("QUOTA_EXCEEDED");
       return itemWithId;
     }
-    try {
-      return await addDoc(collection(db, collectionName), newItem);
-    } catch (e) {
-      const items = localDB.get(collectionName);
-      const itemWithId = { ...newItem, id: Date.now().toString() };
-      localDB.save(collectionName, [itemWithId, ...items]);
-      return itemWithId;
-    }
+    return await addDoc(collection(db, collectionName), { ...data, createdAt: new Date().toISOString() });
   },
 
   async update(collectionName: string, id: string, data: any) {
@@ -160,15 +145,14 @@ export const dbService = {
       const index = items.findIndex((item: any) => item.id === id);
       if (index !== -1) {
         items[index] = { ...items[index], ...data, updatedAt: new Date().toISOString() };
-        localDB.save(collectionName, items);
+        const success = localDB.save(collectionName, items);
+        if (!success) throw new Error("QUOTA_EXCEEDED");
       }
       return;
     }
-    try {
-      const ref = doc(db, collectionName, id);
-      const { id: _, ...cleanData } = data;
-      return await updateDoc(ref, { ...cleanData, updatedAt: new Date().toISOString() });
-    } catch (e) { console.error(e); }
+    const ref = doc(db, collectionName, id);
+    const { id: _, ...cleanData } = data;
+    await updateDoc(ref, { ...cleanData, updatedAt: new Date().toISOString() });
   },
 
   async delete(collectionName: string, id: string) {
@@ -177,9 +161,6 @@ export const dbService = {
       localDB.save(collectionName, items.filter((item: any) => item.id !== id));
       return;
     }
-    try {
-      const ref = doc(db, collectionName, id);
-      await deleteDoc(ref);
-    } catch (e) { console.error(e); }
+    await deleteDoc(doc(db, collectionName, id));
   }
 };

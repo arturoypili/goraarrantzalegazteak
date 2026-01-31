@@ -38,7 +38,8 @@ const History: React.FC<Props> = ({ isAdmin }) => {
       Array.from(files).forEach((file: File) => {
         const reader = new FileReader();
         reader.onloadend = async () => {
-          const optimized = await optimizeImage(reader.result as string);
+          // Usamos 800px y calidad 0.5 para que las historias múltiples quepan en memoria
+          const optimized = await optimizeImage(reader.result as string, 800, 800, 0.5);
           setFormState(prev => ({
             ...prev,
             images: [...(prev.images || []), optimized]
@@ -90,7 +91,7 @@ const History: React.FC<Props> = ({ isAdmin }) => {
       setIsEditing(null);
       setFormState({ images: [] });
     } catch (error) {
-      alert("Error al guardar el relato");
+      alert("Error al guardar el relato. El almacenamiento puede estar lleno.");
     } finally {
       setSaving(false);
     }

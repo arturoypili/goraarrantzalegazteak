@@ -46,9 +46,10 @@ const isCloudinaryConfigured =
   CLOUDINARY_CLOUD_NAME !== "TU_CLOUD_NAME";
 
 /**
- * Optimiza una imagen base64 antes de subirla o guardarla
+ * Optimiza una imagen base64 antes de subirla o guardarla.
+ * Reducimos los valores por defecto para evitar saturar el LocalStorage.
  */
-export const optimizeImage = (base64Str: string, maxWidth = 1200, maxHeight = 1200, quality = 0.7): Promise<string> => {
+export const optimizeImage = (base64Str: string, maxWidth = 800, maxHeight = 800, quality = 0.5): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = base64Str;
@@ -71,7 +72,12 @@ export const optimizeImage = (base64Str: string, maxWidth = 1200, maxHeight = 12
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext('2d');
-      ctx?.drawImage(img, 0, 0, width, height);
+      // Dibujamos fondo blanco para evitar transparencias pesadas en PNG
+      if (ctx) {
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+      }
       resolve(canvas.toDataURL('image/jpeg', quality));
     };
     img.onerror = () => resolve(base64Str);
@@ -80,26 +86,19 @@ export const optimizeImage = (base64Str: string, maxWidth = 1200, maxHeight = 12
 
 export const uploadToCloudinary = async (base64: string): Promise<string> => {
   if (!base64 || !base64.startsWith('data:image')) return base64;
-  
-  if (!isCloudinaryConfigured) {
-    return base64;
-  }
+  if (!isCloudinaryConfigured) return base64;
   
   try {
     const formData = new FormData();
     formData.append('file', base64);
     formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-
     const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
       method: 'POST',
       body: formData
     });
-
     const data = await response.json();
-    if (data.secure_url) return data.secure_url;
-    throw new Error(data.error?.message || "Error en respuesta de Cloudinary");
+    return data.secure_url || base64;
   } catch (error) {
-    console.error("Error subiendo a Cloudinary:", error);
     return base64;
   }
 };
@@ -113,8 +112,8 @@ const localDB = {
     try {
       localStorage.setItem(`gora_${collectionName}`, JSON.stringify(items));
     } catch (e) {
-      console.error("Error de almacenamiento local (QuotaExceeded):", e);
-      alert("Error: El almacenamiento está lleno. Por favor, sube imágenes más pequeñas o configura una base de datos real.");
+      console.error("Error de almacenamiento local:", e);
+      alert("¡MEMORIA LLENA! Has alcanzado el límite del navegador. Para subir más fotos, borra alguna historia antigua o configura una base de datos real.");
     }
   }
 };
@@ -138,25 +137,14 @@ export const dbService = {
       if (item.año && !isNaN(Number(item.año))) return Number(item.año);
       const textToSearch = [item.años, item.date, item.fecha].filter(Boolean).join(' ');
       const match = textToSearch.match(/\d{4}/);
-      if (match) return Number(match[0]);
-      return 0;
+      return match ? Number(match[0]) : 0;
     };
 
-    return items.sort((a, b) => {
-      const yearA = getSortYear(a);
-      const yearB = getSortYear(b);
-      if (yearA !== yearB) return yearB - yearA;
-      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return timeB - timeA;
-    });
+    return items.sort((a, b) => getSortYear(b) - getSortYear(a));
   },
 
   async add(collectionName: string, data: any) {
-    const newItem = {
-      ...data,
-      createdAt: new Date().toISOString()
-    };
+    const newItem = { ...data, createdAt: new Date().toISOString() };
     if (!isFirebaseConfigured || !db) {
       const items = localDB.get(collectionName);
       const itemWithId = { ...newItem, id: Date.now().toString() };
@@ -188,7 +176,7 @@ export const dbService = {
       const { id: _, ...cleanData } = data;
       return await updateDoc(ref, { ...cleanData, updatedAt: new Date().toISOString() });
     } catch (e) {
-      console.error("Error actualizando Firestore:", e);
+      console.error(e);
     }
   },
 
@@ -202,7 +190,7 @@ export const dbService = {
       const ref = doc(db, collectionName, id);
       return await deleteDoc(ref);
     } catch (e) {
-      console.error("Error eliminando en Firestore:", e);
+      console.error(e);
     }
   }
 };

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Cantinera } from '../types';
-import { dbService, uploadToCloudinary } from '../lib/storage';
+import { dbService, uploadToCloudinary, optimizeImage } from '../lib/storage';
 import { Plus, Edit, Trash2, X, Save, Upload, Loader2, Heart } from 'lucide-react';
 
 interface Props {
@@ -37,8 +37,10 @@ const Cantineras: React.FC<Props> = ({ isAdmin }) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormState(prev => ({ ...prev, foto: reader.result as string }));
+      reader.onloadend = async () => {
+        // Optimizamos la foto antes de guardarla
+        const optimized = await optimizeImage(reader.result as string, 600, 800);
+        setFormState(prev => ({ ...prev, foto: optimized }));
       };
       reader.readAsDataURL(file);
     }
@@ -73,7 +75,7 @@ const Cantineras: React.FC<Props> = ({ isAdmin }) => {
       setIsEditing(null);
       setFormState({});
     } catch (error) {
-      alert("Error al guardar cantinera");
+      alert("Error al guardar cantinera. Puede que el almacenamiento esté lleno.");
     } finally {
       setSaving(false);
     }
